@@ -1,149 +1,249 @@
 /**
- * defaultProject – a hardcoded MouthBeatProject fixture.
+ * defaultProject – DEMO BEAT FIXTURE
  *
- * bpm = 90  →  one beat = 60/90 ≈ 0.6667 s
- *              one 16th  = 60/90/4 ≈ 0.1667 s
+ * This is the canonical demo project loaded when the user taps "Try Demo Beat"
+ * on the Home screen. It is a complete, cleaned, self-contained beat — no
+ * recording required.
  *
- * Two bars of 4/4 at 90 bpm = 8 beats = 32 sixteenth-note slots.
- * We place events on musically sensible 16th-note grid positions.
+ * Spec:
+ *   bpm = 95  →  one beat  = 60/95 ≈ 0.6316 s
+ *               one 16th   = 60/95/4 ≈ 0.1579 s
  *
- * Round-trip test (run in any JS console):
- *   import { defaultProject } from './defaultProject';
+ *   4 bars of 4/4 at 95 bpm = 16 beats = 64 sixteenth-note slots.
+ *
+ * Pattern (per bar, repeated × 4):
+ *   Kick      : 1 . . . 3 . . .   (beats 1 & 3)
+ *   Snare     : . . 2 . . . 4 .   (beats 2 & 4)
+ *   Hi-Hat    : every 8th note     (slots 0,2,4,6,8,10,12,14 per bar)
+ *   Open HH   : slot 6 per bar     ("and" of beat 3 — adds groove)
+ *   Perc      : slots 2, 10        (syncopated 16th accents)
+ *
+ * Round-trip test (any JS console):
  *   const rt = JSON.parse(JSON.stringify(defaultProject));
  *   console.assert(JSON.stringify(rt) === JSON.stringify(defaultProject));
  */
 
-import type { MouthBeatProject } from '../types/project';
+export interface DemoSample {
+  id: string;
+  label: string;
+  uri: string;
+  gain: number;
+}
 
-const BEAT = 60 / 90;          // ≈ 0.6667 s
-const SIXTEENTH = BEAT / 4;    // ≈ 0.1667 s
+export interface DemoEvent {
+  id: string;
+  timeSeconds: number;
+  durationSeconds: number;
+  sampleId: string;
+  velocity: number;
+}
+
+export interface DemoLane {
+  id: string;
+  name: string;
+  type: string;
+  sampleId: string;
+  muted: boolean;
+  soloed: boolean;
+  events: DemoEvent[];
+}
+
+export interface DemoKit {
+  id: string;
+  name: string;
+  samples: DemoSample[];
+}
+
+export interface DemoProject {
+  id: string;
+  title: string;
+  bpm: number;
+  beatsPerBar: number;
+  beatUnit: number;
+  lengthBars: number;
+  createdAt: string;
+  updatedAt: string;
+  kit: DemoKit;
+  recordings: unknown[];
+  lanes: DemoLane[];
+}
+
+const BPM = 95;
+const BEAT = 60 / BPM;        // ≈ 0.6316 s
+const SIXTEENTH = BEAT / 4;   // ≈ 0.1579 s
+const BARS = 4;
+const SLOTS_PER_BAR = 16;     // 16 sixteenth-note slots per bar
 
 /** Round to 4 decimal places to avoid floating-point noise in JSON. */
 const t = (sixteenths: number): number =>
   Math.round(sixteenths * SIXTEENTH * 10000) / 10000;
 
-export const defaultProject: MouthBeatProject = {
-  id: 'fixture-default-project',
-  title: 'Default Beat',
-  bpm: 90,
+// ---------------------------------------------------------------------------
+// Pattern builder helpers
+// ---------------------------------------------------------------------------
+
+/** Repeat a per-bar slot pattern across all bars. */
+function repeatPattern(
+  sampleId: string,
+  prefix: string,
+  slotsPerBar: number[],
+  durationSeconds: number,
+  velocityFn: (barIdx: number, slotIdx: number) => number,
+): DemoEvent[] {
+  const events: DemoEvent[] = [];
+  for (let bar = 0; bar < BARS; bar++) {
+    for (const slot of slotsPerBar) {
+      const absoluteSlot = bar * SLOTS_PER_BAR + slot;
+      events.push({
+        id: `${prefix}-b${bar}-s${slot}`,
+        timeSeconds: t(absoluteSlot),
+        durationSeconds,
+        sampleId,
+        velocity: velocityFn(bar, slot),
+      });
+    }
+  }
+  return events;
+}
+
+// ---------------------------------------------------------------------------
+// Kick: beats 1 & 3 → slots 0, 8
+// ---------------------------------------------------------------------------
+const kickEvents = repeatPattern(
+  'demo-sample-kick',
+  'kick',
+  [0, 8],
+  0.05,
+  (_bar, slot) => (slot === 0 ? 1.0 : 0.88),
+);
+
+// ---------------------------------------------------------------------------
+// Snare: beats 2 & 4 → slots 4, 12
+// ---------------------------------------------------------------------------
+const snareEvents = repeatPattern(
+  'demo-sample-snare',
+  'snare',
+  [4, 12],
+  0.05,
+  () => 0.95,
+);
+
+// ---------------------------------------------------------------------------
+// Closed Hi-Hat: every 8th note → slots 0,2,4,6,8,10,12,14
+// (slot 6 will be overridden by open HH, so hat-6 is quieter)
+// ---------------------------------------------------------------------------
+const hatEvents = repeatPattern(
+  'demo-sample-hat-closed',
+  'hat',
+  [0, 2, 4, 6, 8, 10, 12, 14],
+  0.03,
+  (_bar, slot) => {
+    if (slot === 0 || slot === 8) return 0.75;  // on-beat accent
+    if (slot === 6) return 0.45;                // ghost under open HH
+    return 0.60;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Open Hi-Hat: slot 6 per bar ("and" of beat 3)
+// ---------------------------------------------------------------------------
+const openHatEvents = repeatPattern(
+  'demo-sample-hat-open',
+  'openhat',
+  [6],
+  0.18,
+  () => 0.70,
+);
+
+// ---------------------------------------------------------------------------
+// Perc: syncopated 16th accents at slots 2 & 10
+// ---------------------------------------------------------------------------
+const percEvents = repeatPattern(
+  'demo-sample-perc',
+  'perc',
+  [2, 10],
+  0.04,
+  (_bar, slot) => (slot === 2 ? 0.80 : 0.72),
+);
+
+// ---------------------------------------------------------------------------
+// Assembled fixture
+// ---------------------------------------------------------------------------
+export const defaultProject: DemoProject = {
+  id: 'fixture-demo-beat-v2',
+  title: 'Demo Beat — Groove 95',
+  bpm: BPM,
   beatsPerBar: 4,
   beatUnit: 4,
-  lengthBars: 2,
+  lengthBars: BARS,
   createdAt: '2024-01-01T00:00:00.000Z',
   updatedAt: '2024-01-01T00:00:00.000Z',
 
   kit: {
-    id: 'kit-default',
-    name: 'Default Kit',
+    id: 'kit-demo',
+    name: 'Demo Kit',
     samples: [
-      {
-        id: 'sample-kick',
-        label: 'Kick',
-        uri: 'assets/samples/kick.wav',
-        gain: 1.0,
-      },
-      {
-        id: 'sample-snare',
-        label: 'Snare',
-        uri: 'assets/samples/snare.wav',
-        gain: 1.0,
-      },
-      {
-        id: 'sample-hat-closed',
-        label: 'Hi-Hat Closed',
-        uri: 'assets/samples/hat_closed.wav',
-        gain: 0.8,
-      },
-      {
-        id: 'sample-perc',
-        label: 'Perc',
-        uri: 'assets/samples/perc.wav',
-        gain: 0.9,
-      },
+      { id: 'demo-sample-kick',       label: 'Kick',          uri: 'assets/samples/kick.wav',       gain: 1.0 },
+      { id: 'demo-sample-snare',      label: 'Snare',         uri: 'assets/samples/snare.wav',      gain: 1.0 },
+      { id: 'demo-sample-hat-closed', label: 'Hi-Hat Closed', uri: 'assets/samples/hat_closed.wav', gain: 0.8 },
+      { id: 'demo-sample-hat-open',   label: 'Hi-Hat Open',   uri: 'assets/samples/hat_open.wav',   gain: 0.75 },
+      { id: 'demo-sample-perc',       label: 'Perc',          uri: 'assets/samples/perc.wav',       gain: 0.9 },
     ],
   },
 
   recordings: [],
 
   lanes: [
-    // ── KICK ──────────────────────────────────────────────────────────────
-    // Hits on beats 1 and 3 of each bar (16th positions 0, 8, 16, 24)
     {
       id: 'lane-kick',
       name: 'Kick',
       type: 'kick',
-      sampleId: 'sample-kick',
+      sampleId: 'demo-sample-kick',
       muted: false,
       soloed: false,
-      events: [
-        { id: 'kick-0',  timeSeconds: t(0),  durationSeconds: 0.05, sampleId: 'sample-kick', velocity: 1.0 },
-        { id: 'kick-8',  timeSeconds: t(8),  durationSeconds: 0.05, sampleId: 'sample-kick', velocity: 0.9 },
-        { id: 'kick-16', timeSeconds: t(16), durationSeconds: 0.05, sampleId: 'sample-kick', velocity: 1.0 },
-        { id: 'kick-24', timeSeconds: t(24), durationSeconds: 0.05, sampleId: 'sample-kick', velocity: 0.9 },
-      ],
+      events: kickEvents,
     },
-
-    // ── SNARE ─────────────────────────────────────────────────────────────
-    // Backbeats on beats 2 and 4 of each bar (16th positions 4, 12, 20, 28)
     {
       id: 'lane-snare',
       name: 'Snare',
       type: 'snare',
-      sampleId: 'sample-snare',
+      sampleId: 'demo-sample-snare',
       muted: false,
       soloed: false,
-      events: [
-        { id: 'snare-4',  timeSeconds: t(4),  durationSeconds: 0.05, sampleId: 'sample-snare', velocity: 0.95 },
-        { id: 'snare-12', timeSeconds: t(12), durationSeconds: 0.05, sampleId: 'sample-snare', velocity: 0.95 },
-        { id: 'snare-20', timeSeconds: t(20), durationSeconds: 0.05, sampleId: 'sample-snare', velocity: 0.95 },
-        { id: 'snare-28', timeSeconds: t(28), durationSeconds: 0.05, sampleId: 'sample-snare', velocity: 0.95 },
-      ],
+      events: snareEvents,
     },
-
-    // ── HI-HAT ────────────────────────────────────────────────────────────
-    // Eighth-note pattern (every 2 sixteenths): positions 0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30
     {
       id: 'lane-hat',
       name: 'Hi-Hat',
       type: 'hat',
-      sampleId: 'sample-hat-closed',
+      sampleId: 'demo-sample-hat-closed',
       muted: false,
       soloed: false,
-      events: [
-        { id: 'hat-0',  timeSeconds: t(0),  durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-2',  timeSeconds: t(2),  durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-4',  timeSeconds: t(4),  durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-6',  timeSeconds: t(6),  durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-8',  timeSeconds: t(8),  durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-10', timeSeconds: t(10), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-12', timeSeconds: t(12), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-14', timeSeconds: t(14), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-16', timeSeconds: t(16), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-18', timeSeconds: t(18), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-20', timeSeconds: t(20), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-22', timeSeconds: t(22), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-24', timeSeconds: t(24), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-26', timeSeconds: t(26), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-        { id: 'hat-28', timeSeconds: t(28), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.7 },
-        { id: 'hat-30', timeSeconds: t(30), durationSeconds: 0.03, sampleId: 'sample-hat-closed', velocity: 0.6 },
-      ],
+      events: hatEvents,
     },
-
-    // ── PERC ──────────────────────────────────────────────────────────────
-    // Syncopated hits at 16th positions 2, 10, 18, 26
+    {
+      id: 'lane-openhat',
+      name: 'Open HH',
+      type: 'hat-open',
+      sampleId: 'demo-sample-hat-open',
+      muted: false,
+      soloed: false,
+      events: openHatEvents,
+    },
     {
       id: 'lane-perc',
       name: 'Perc',
       type: 'perc',
-      sampleId: 'sample-perc',
+      sampleId: 'demo-sample-perc',
       muted: false,
       soloed: false,
-      events: [
-        { id: 'perc-2',  timeSeconds: t(2),  durationSeconds: 0.04, sampleId: 'sample-perc', velocity: 0.75 },
-        { id: 'perc-10', timeSeconds: t(10), durationSeconds: 0.04, sampleId: 'sample-perc', velocity: 0.75 },
-        { id: 'perc-18', timeSeconds: t(18), durationSeconds: 0.04, sampleId: 'sample-perc', velocity: 0.75 },
-        { id: 'perc-26', timeSeconds: t(26), durationSeconds: 0.04, sampleId: 'sample-perc', velocity: 0.75 },
-      ],
+      events: percEvents,
     },
   ],
 };
+
+/** Convenience: total duration of the demo project in seconds. */
+export const demoDurationSeconds: number =
+  Math.round(BARS * 4 * BEAT * 10000) / 10000;
+
+export default defaultProject;

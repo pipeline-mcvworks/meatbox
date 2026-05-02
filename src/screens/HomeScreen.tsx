@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
 import ControlsButton from '../components/controls/ControlsButton';
 import { EmptyState } from '../components/visualizer';
+import { defaultProject } from '../fixtures/defaultProject';
 
 // Project store loader is optional (different phases expose different APIs).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,56 +30,82 @@ interface RecentProject {
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<any>();
 
-  const recentProjects: RecentProject[] = useMemo(() => {
-    if (!useProjectStore) return [];
-    try {
-      // Try to read a list of saved projects from store if available.
-      const state = useProjectStore.getState?.();
-      const list = state?.recentProjects ?? state?.projects ?? null;
-      if (Array.isArray(list)) {
-        return list.map((p: any) => ({
-          id: String(p.id ?? p.title ?? Math.random()),
-          name: String(p.name ?? p.title ?? 'Untitled'),
-          date: String(p.updatedAt ?? p.createdAt ?? ''),
-        }));
-      }
-    } catch {
-      // ignore
-    }
-    return [];
-  }, []);
+  // Reactive recent-projects list from store (if available).
+  // We use a useState + useEffect pattern so the store subscription is
+  // reactive rather than a one-shot getState() snapshot inside useMemo.
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
 
-  const handleDemoProject = () => {
-    let loaded = false;
-    try {
-      const state = useProjectStore?.getState?.();
-      if (state?.loadDefaultProject) {
-        state.loadDefaultProject();
-        loaded = true;
-      }
-    } catch {
-      // ignore
-    }
-    if (!loaded) {
+  useEffect(() => {
+    if (!useProjectStore) return;
+    const readProjects = () => {
       try {
-        const loadDefaultProject = useProjectStore?.((s: any) => s.loadDefaultProject);
-        if (typeof loadDefaultProject === 'function') {
-          loadDefaultProject();
+        const state = useProjectStore.getState?.();
+        const list = state?.recentProjects ?? state?.projects ?? null;
+        if (Array.isArray(list)) {
+          setRecentProjects(
+            list.map((p: any) => ({
+              id: String(p.id ?? p.title ?? Math.random()),
+              name: String(p.name ?? p.title ?? 'Untitled'),
+              date: String(p.updatedAt ?? p.createdAt ?? ''),
+            }))
+          );
+          return;
         }
       } catch {
         // ignore
       }
-    }
-    navigation.navigate('Timeline');
-  };
+      setRecentProjects([]);
+    };
 
-  const handleVisualizer = () => {
+    readProjects();
+
+    // Subscribe to store changes if the store exposes subscribe().
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = useProjectStore.subscribe?.(readProjects);
+    } catch {
+      // ignore
+    }
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  const handleDemoProject = useCallback(() => {
+    // 1. Try to load via store action (preferred — keeps store in sync).
+    let loadedViaStore = false;
+    try {
+      const state = useProjectStore?.getState?.();
+      if (typeof state?.loadDefaultProject === 'function') {
+        state.loadDefaultProject();
+        loadedViaStore = true;
+      } else if (typeof state?.loadProject === 'function') {
+        state.loadProject(defaultProject);
+        loadedViaStore = true;
+      } else if (typeof state?.setProject === 'function') {
+        state.setProject(defaultProject);
+        loadedViaStore = true;
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. If store action unavailable, pass the fixture directly as a nav param
+    //    so the Timeline screen can render it without a store.
+    if (loadedViaStore) {
+      navigation.navigate('Timeline');
+    } else {
+      navigation.navigate('Timeline', { demoProject: defaultProject });
+    }
+  }, [navigation]);
+
+  const handleVisualizer = useCallback(() => {
     try {
       navigation.navigate('Visualizer');
     } catch {
       // ignore
     }
-  };
+  }, [navigation]);
 
   const renderProjectItem = ({ item }: { item: RecentProject }) => (
     <TouchableOpacity
