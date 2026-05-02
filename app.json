@@ -16,20 +16,32 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mouthbeatmachine.app"
+      "bundleIdentifier": "com.mouthbeatmachine.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "MouthBeat Machine needs microphone access to record your beatbox performances."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0f"
       },
-      "package": "com.mouthbeatmachine.app"
+      "package": "com.mouthbeatmachine.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "react-native-reanimated"
+      "react-native-reanimated",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "MouthBeat Machine needs microphone access to record your beatbox performances."
+        }
+      ]
     ]
   }
 }

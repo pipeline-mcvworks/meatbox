@@ -13,6 +13,8 @@ export interface AudioState {
   analysisStatus: AnalysisStatus;
   /** Duration of the current recording in seconds */
   recordingDuration: number;
+  /** Live normalised input level from the microphone (0–1) */
+  liveInputLevel: number;
 }
 
 export interface AudioActions {
@@ -22,6 +24,7 @@ export interface AudioActions {
   setWaveformPeaks: (peaks: number[]) => void;
   setAnalysisStatus: (status: AnalysisStatus) => void;
   setRecordingDuration: (duration: number) => void;
+  setLiveInputLevel: (level: number) => void;
   resetAudio: () => void;
 }
 
@@ -34,6 +37,7 @@ const initialState: AudioState = {
   waveformPeaks: [],
   analysisStatus: 'idle',
   recordingDuration: 0,
+  liveInputLevel: 0,
 };
 
 export const useAudioStore = create<AudioStore>()(
@@ -70,6 +74,11 @@ export const useAudioStore = create<AudioStore>()(
         state.recordingDuration = duration;
       }),
 
+    setLiveInputLevel: (level) =>
+      set((state) => {
+        state.liveInputLevel = level;
+      }),
+
     resetAudio: () =>
       set((state) => {
         Object.assign(state, initialState);
@@ -87,3 +96,4 @@ export const selectRecordingUri = (s: AudioStore) => s.recordingUri;
 export const selectWaveformPeaks = (s: AudioStore) => s.waveformPeaks;
 export const selectAnalysisStatus = (s: AudioStore) => s.analysisStatus;
 export const selectIsRecording = (s: AudioStore) => s.recordingState === 'recording';
+export const selectLiveInputLevel = (s: AudioStore) => s.liveInputLevel;
