@@ -77,37 +77,41 @@ export default function AnalyzeScreen(): React.JSX.Element {
     };
   }, [recordingUri, recordingDuration, setWaveformPeaks]);
 
-  const analysisResult = useMemo(() => {
-    if (loading || waveformPeaks.length === 0 || recordingDuration <= 0) {
-      return {
-        detectedHits: [],
-        classifiedHits: [],
-        quantizedHits: [],
-      };
+  const canAnalyze = !loading && waveformPeaks.length > 0 && recordingDuration > 0;
+  const analysisSampleRate = canAnalyze ? waveformPeaks.length / recordingDuration : 0;
+
+  const detectedHits = useMemo(() => {
+    if (!canAnalyze || analysisSampleRate <= 0) {
+      return [];
     }
 
-    const analysisSampleRate = waveformPeaks.length / recordingDuration;
-    const detectedHits = detectOnsets(waveformPeaks, {
+    return detectOnsets(waveformPeaks, {
       sampleRate: analysisSampleRate,
       sensitivity,
     });
-    const classifiedHits = classifyHits(waveformPeaks, detectedHits, {
+  }, [canAnalyze, waveformPeaks, analysisSampleRate, sensitivity]);
+
+  const classifiedHits = useMemo(() => {
+    if (!canAnalyze || analysisSampleRate <= 0 || detectedHits.length === 0) {
+      return [];
+    }
+
+    return classifyHits(waveformPeaks, detectedHits, {
       sampleRate: analysisSampleRate,
     });
-    const quantizedHits = quantizeHits<ClassifiedHit>(classifiedHits, {
+  }, [canAnalyze, waveformPeaks, detectedHits, analysisSampleRate]);
+
+  const quantizedHits = useMemo(() => {
+    if (classifiedHits.length === 0) {
+      return [];
+    }
+
+    return quantizeHits<ClassifiedHit>(classifiedHits, {
       bpm,
       division: 16,
       strength: 100,
     });
-
-    return {
-      detectedHits,
-      classifiedHits,
-      quantizedHits,
-    };
-  }, [loading, waveformPeaks, recordingDuration, sensitivity, bpm]);
-
-  const { detectedHits, classifiedHits, quantizedHits } = analysisResult;
+  }, [classifiedHits, bpm]);
 
   const labelSummary = useMemo(() => {
     if (quantizedHits.length === 0) {
