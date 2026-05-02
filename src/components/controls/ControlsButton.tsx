@@ -1,6 +1,7 @@
 import React from 'react';
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { colors, spacing, typography } from '../../theme';
+import { haptics } from '../../utils/haptics';
 
 interface ControlsButtonProps {
   title: string;
@@ -15,6 +16,10 @@ export default function ControlsButton({
   variant = 'primary',
   disabled = false,
 }: ControlsButtonProps): React.JSX.Element {
+  const handlePress = () => {
+    haptics.transport();
+    onPress();
+  };
   return (
     <TouchableOpacity
       style={[
@@ -22,9 +27,11 @@ export default function ControlsButton({
         variant === 'primary' ? styles.primary : styles.secondary,
         disabled && styles.disabled,
       ]}
-      onPress={onPress}
+      onPress={handlePress}
       disabled={disabled}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={title}
     >
       <Text
         style={[

@@ -3,6 +3,9 @@
  * Quantize-strength, swing, and humanize sliders. Each writes to projectStore
  * AND triggers applyQuantizeToSelection (acts on selected event if one is
  * selected, else on all unlocked events).
+ *
+ * Each commit fires a haptic 'drag-snap' tick — committing a slider cell is
+ * the user-visible snap action in this UI.
  */
 
 import React from 'react';
@@ -10,6 +13,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, spacing, typography } from '../../theme';
 import { useProjectStore } from '../../state/projectStore';
 import { useUiStore } from '../../state/uiStore';
+import { haptics } from '../../utils/haptics';
 
 interface SliderProps {
   label: string;
@@ -36,7 +40,10 @@ function Slider({ label, value, onCommit, steps = 10 }: SliderProps): React.JSX.
                 styles.cell,
                 { backgroundColor: filled ? colors.neonGreen : colors.border },
               ]}
-              onPress={() => onCommit(cellValue)}
+              onPress={() => {
+                haptics.dragSnap();
+                onCommit(cellValue);
+              }}
             />
           );
         })}

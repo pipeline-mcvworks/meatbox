@@ -1,6 +1,7 @@
 /**
  * EventContextMenu
  * Long-press action sheet: Delete / Duplicate / Lock-toggle.
+ * Fires haptics on each destructive/important action.
  */
 
 import React from 'react';
@@ -9,6 +10,7 @@ import { useProjectStore } from '../../state/projectStore';
 import { useUiStore } from '../../state/uiStore';
 import type { DrumEvent } from '../../state/types';
 import { colors, spacing, typography } from '../../theme';
+import { haptics } from '../../utils/haptics';
 
 export default function EventContextMenu(): React.JSX.Element | null {
   const contextMenuEventId = useUiStore((s) => s.contextMenuEventId);
@@ -38,6 +40,7 @@ export default function EventContextMenu(): React.JSX.Element | null {
           <TouchableOpacity
             style={styles.item}
             onPress={() => {
+              haptics.medium();
               duplicateEvent(event.id);
               close();
             }}
@@ -47,6 +50,7 @@ export default function EventContextMenu(): React.JSX.Element | null {
           <TouchableOpacity
             style={styles.item}
             onPress={() => {
+              haptics.transport();
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               updateEvent(event.id, { locked: !locked } as any);
               close();
@@ -57,6 +61,7 @@ export default function EventContextMenu(): React.JSX.Element | null {
           <TouchableOpacity
             style={[styles.item, styles.danger]}
             onPress={() => {
+              haptics.warning();
               deleteEvent(event.id);
               close();
             }}
