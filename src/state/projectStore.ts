@@ -7,10 +7,10 @@ import type { DrumEvent, Kit, Lane } from './types';
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LANES: Lane[] = [
-  { id: 'lane-kick',  name: 'Kick',   instrument: 'kick',   muted: false, solo: false, volume: 1, pan: 0, color: '#E57373' },
-  { id: 'lane-snare', name: 'Snare',  instrument: 'snare',  muted: false, solo: false, volume: 1, pan: 0, color: '#81C784' },
-  { id: 'lane-hihat', name: 'Hi-Hat', instrument: 'hihat',  muted: false, solo: false, volume: 1, pan: 0, color: '#64B5F6' },
-  { id: 'lane-clap',  name: 'Clap',   instrument: 'clap',   muted: false, solo: false, volume: 1, pan: 0, color: '#FFD54F' },
+  { id: 'lane-kick',  name: 'Kick',   instrument: 'kick',   muted: false, solo: false, volume: 1, pan: 0, color: '#E57373', sampleId: 'sample-kick' },
+  { id: 'lane-snare', name: 'Snare',  instrument: 'snare',  muted: false, solo: false, volume: 1, pan: 0, color: '#81C784', sampleId: 'sample-snare' },
+  { id: 'lane-hihat', name: 'Hi-Hat', instrument: 'hihat',  muted: false, solo: false, volume: 1, pan: 0, color: '#64B5F6', sampleId: 'sample-hihat' },
+  { id: 'lane-clap',  name: 'Clap',   instrument: 'clap',   muted: false, solo: false, volume: 1, pan: 0, color: '#FFD54F', sampleId: 'sample-clap' },
 ];
 
 const DEFAULT_EVENTS: DrumEvent[] = [
@@ -35,12 +35,67 @@ const DEFAULT_KIT: Kit = {
   id: 'kit-default',
   name: 'Default Kit',
   pads: [
-    { id: 'pad-kick',  name: 'Kick',   color: '#E57373' },
-    { id: 'pad-snare', name: 'Snare',  color: '#81C784' },
-    { id: 'pad-hihat', name: 'Hi-Hat', color: '#64B5F6' },
-    { id: 'pad-clap',  name: 'Clap',   color: '#FFD54F' },
+    { id: 'pad-kick',  name: 'Kick',   color: '#E57373', sampleId: 'sample-kick' },
+    { id: 'pad-snare', name: 'Snare',  color: '#81C784', sampleId: 'sample-snare' },
+    { id: 'pad-hihat', name: 'Hi-Hat', color: '#64B5F6', sampleId: 'sample-hihat' },
+    { id: 'pad-clap',  name: 'Clap',   color: '#FFD54F', sampleId: 'sample-clap' },
   ],
 };
+
+export const BUILT_IN_KITS = [
+  {
+    id: 'kit-default',
+    name: 'Default',
+    pads: [
+      { id: 'pad-kick',  name: 'Kick',   color: '#E57373', sampleId: 'sample-kick' },
+      { id: 'pad-snare', name: 'Snare',  color: '#81C784', sampleId: 'sample-snare' },
+      { id: 'pad-hihat', name: 'Hi-Hat', color: '#64B5F6', sampleId: 'sample-hihat' },
+      { id: 'pad-clap',  name: 'Clap',   color: '#FFD54F', sampleId: 'sample-clap' },
+    ],
+  },
+  {
+    id: 'kit-electronic',
+    name: 'Electronic',
+    pads: [
+      { id: 'pad-kick',  name: 'Kick',   color: '#CE93D8', sampleId: 'sample-kick' },
+      { id: 'pad-snare', name: 'Snare',  color: '#80CBC4', sampleId: 'sample-snare' },
+      { id: 'pad-hihat', name: 'Hi-Hat', color: '#90CAF9', sampleId: 'sample-hihat' },
+      { id: 'pad-clap',  name: 'Clap',   color: '#FFE082', sampleId: 'sample-clap' },
+      { id: 'pad-tom1',  name: 'Tom 1',  color: '#F48FB1', sampleId: 'sample-tom1' },
+      { id: 'pad-tom2',  name: 'Tom 2',  color: '#A5D6A7', sampleId: 'sample-tom2' },
+      { id: 'pad-ride',  name: 'Ride',   color: '#B0BEC5', sampleId: 'sample-ride' },
+      { id: 'pad-crash', name: 'Crash',  color: '#FFAB91', sampleId: 'sample-crash' },
+    ],
+  },
+  {
+    id: 'kit-acoustic',
+    name: 'Acoustic',
+    pads: [
+      { id: 'pad-kick',  name: 'Kick',   color: '#EF9A9A', sampleId: 'sample-kick' },
+      { id: 'pad-snare', name: 'Snare',  color: '#C8E6C9', sampleId: 'sample-snare' },
+      { id: 'pad-hihat', name: 'Hi-Hat', color: '#BBDEFB', sampleId: 'sample-hihat' },
+      { id: 'pad-clap',  name: 'Clap',   color: '#FFF9C4', sampleId: 'sample-clap' },
+      { id: 'pad-tom1',  name: 'Tom 1',  color: '#F8BBD0', sampleId: 'sample-tom1' },
+      { id: 'pad-tom2',  name: 'Tom 2',  color: '#C8E6C9', sampleId: 'sample-tom2' },
+      { id: 'pad-ride',  name: 'Ride',   color: '#D7CCC8', sampleId: 'sample-ride' },
+      { id: 'pad-crash', name: 'Crash',  color: '#FFCCBC', sampleId: 'sample-crash' },
+    ],
+  },
+  {
+    id: 'kit-hiphop',
+    name: 'Hip Hop',
+    pads: [
+      { id: 'pad-kick',  name: 'Kick',   color: '#F06292', sampleId: 'sample-kick' },
+      { id: 'pad-snare', name: 'Snare',  color: '#AED581', sampleId: 'sample-snare' },
+      { id: 'pad-hihat', name: 'Hi-Hat', color: '#4FC3F7', sampleId: 'sample-hihat' },
+      { id: 'pad-clap',  name: 'Clap',   color: '#FFB74D', sampleId: 'sample-clap' },
+      { id: 'pad-openhh', name: 'Open HH', color: '#9575CD', sampleId: 'sample-openhh' },
+      { id: 'pad-closedhh', name: 'Closed HH', color: '#4DB6AC', sampleId: 'sample-closedhh' },
+      { id: 'pad-cowbell', name: 'Cowbell', color: '#FF8A65', sampleId: 'sample-cowbell' },
+      { id: 'pad-tambourine', name: 'Tambourine', color: '#90A4AE', sampleId: 'sample-tambourine' },
+    ],
+  },
+];
 
 export interface ProjectState {
   id: string;
@@ -63,6 +118,7 @@ export interface ProjectActions {
   addLane: (lane: Lane) => void;
   updateLane: (id: string, patch: Partial<Lane>) => void;
   deleteLane: (id: string) => void;
+  setLaneSample: (laneId: string, sampleId: string) => void;
   // Event actions
   addEvent: (event: DrumEvent) => void;
   updateEvent: (id: string, patch: Partial<DrumEvent>) => void;
@@ -129,6 +185,15 @@ export const useProjectStore = create<ProjectStore>()(
         state.updatedAt = new Date().toISOString();
       }),
 
+    setLaneSample: (laneId, sampleId) =>
+      set((state) => {
+        const lane = state.lanes.find((l) => l.id === laneId);
+        if (lane) {
+          lane.sampleId = sampleId;
+          state.updatedAt = new Date().toISOString();
+        }
+      }),
+
     addEvent: (event) =>
       set((state) => {
         state.events.push(event);
@@ -153,6 +218,13 @@ export const useProjectStore = create<ProjectStore>()(
     setKit: (kit) =>
       set((state) => {
         state.kit = kit;
+        // Update lanes to match kit pads
+        kit.pads.forEach((pad) => {
+          const lane = state.lanes.find((l) => l.instrument === pad.id.replace('pad-', ''));
+          if (lane && pad.sampleId) {
+            lane.sampleId = pad.sampleId;
+          }
+        });
         state.updatedAt = new Date().toISOString();
       }),
   }))
