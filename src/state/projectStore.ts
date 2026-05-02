@@ -114,6 +114,12 @@ export interface ProjectState {
   kit: Kit;
   createdAt: string;
   updatedAt: string;
+  /** 0..1 — how strongly to pull beats to the grid */
+  quantizeStrength: number;
+  /** 0..1 — swing amount applied to off-beat 16ths */
+  swing: number;
+  /** 0..1 — random timing jitter applied on quantize */
+  humanize: number;
 }
 
 export interface ProjectActions {
@@ -127,9 +133,21 @@ export interface ProjectActions {
   setLaneSample: (laneId: string, sampleId: string) => void;
   // Event actions
   addEvent: (event: DrumEvent) => void;
+  /** Add a new event at a given beat in a given lane. Returns new event id. */
+  addEventAt: (laneId: string, beat: number, velocity?: number) => string;
   updateEvent: (id: string, patch: Partial<DrumEvent>) => void;
   deleteEvent: (id: string) => void;
+  /** Move an event to a new start beat and (optionally) lane. */
+  moveEvent: (id: string, startBeat: number, laneId?: string) => void;
+  /** Duplicate an event; returns new event id. */
+  duplicateEvent: (id: string) => string | null;
   setTimelineEvents: (events: TimelineEvent[], mode?: TimelineEventMergeMode) => void;
+  // Quantize controls
+  setQuantizeStrength: (v: number) => void;
+  setSwing: (v: number) => void;
+  setHumanize: (v: number) => void;
+  /** Apply quantize/swing/humanize. If ids is empty, applies to all unlocked events. */
+  applyQuantizeToSelection: (ids: string[]) => void;
   // Kit actions
   setKit: (kit: Kit) => void;
 }
@@ -146,10 +164,51 @@ const initialState: ProjectState = {
   kit: DEFAULT_KIT,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+  quantizeStrength: 0,
+  swing: 0,
+  humanize: 0,
 };
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function beatToSeconds(beat: number, bpm: number): number {
+  return (beat * 60) / Math.max(1, bpm);
+}
+
+function secondsToBeat(seconds: number, bpm: number): number {
+  return (seconds * Math.max(1, bpm)) / 60;
+}
+
+function snapBeat(beat: number, strength: number, step = 0.25): number {
+  const q = Math.round(beat / step) * step;
+  const s = Math.max(0, Math.min(1, strength));
+  return beat + (q - beat) * s;
+}
+
+function applySwing(beat: number, swing: number, step = 0.25): number {
+  // Push every odd 16th note later by `swing * step * 0.5`.
+  if (swing <= 0) return beat;
+  const idx = Math.round(beat / step);
+  if (idx % 2 === 1) {
+    return beat + Math.max(0, Math.min(1, swing)) * step * 0.5;
+  }
+  return beat;
+}
+
+function applyHumanize(beat: number, humanize: number, step = 0.25): number {
+  if (humanize <= 0) return beat;
+  const jitter = (Math.random() - 0.5) * 2 * humanize * step * 0.5;
+  return Math.max(0, beat + jitter);
+}
+
+function makeEventId(): string {
+  return `evt-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+}
+
 export const useProjectStore = create<ProjectStore>()(
-  immer((set) => ({
+  immer((set, get) => ({
     ...initialState,
 
     setProject: (project) =>
@@ -207,6 +266,23 @@ export const useProjectStore = create<ProjectStore>()(
         state.updatedAt = new Date().toISOString();
       }),
 
+    addEventAt: (laneId, beat, velocity = 0.9) => {
+      const id = makeEventId();
+      set((state) => {
+        const startTime = beatToSeconds(Math.max(0, beat), state.bpm);
+        const newEvent: DrumEvent = {
+          id,
+          laneId,
+          startTime,
+          duration: 0.25,
+          velocity,
+        };
+        state.events.push(newEvent);
+        state.updatedAt = new Date().toISOString();
+      });
+      return id;
+    },
+
     updateEvent: (id, patch) =>
       set((state) => {
         const event = state.events.find((e) => e.id === id);
@@ -221,6 +297,35 @@ export const useProjectStore = create<ProjectStore>()(
         state.events = state.events.filter((e) => e.id !== id);
         state.updatedAt = new Date().toISOString();
       }),
+
+    moveEvent: (id, startBeat, laneId) =>
+      set((state) => {
+        const event = state.events.find((e) => e.id === id);
+        if (!event) return;
+        // Respect locked flag if present.
+        if ((event as DrumEvent & { locked?: boolean }).locked) return;
+        event.startTime = beatToSeconds(Math.max(0, startBeat), state.bpm);
+        if (laneId && state.lanes.some((l) => l.id === laneId)) {
+          event.laneId = laneId;
+        }
+        state.updatedAt = new Date().toISOString();
+      }),
+
+    duplicateEvent: (id) => {
+      const original = get().events.find((e) => e.id === id);
+      if (!original) return null;
+      const newId = makeEventId();
+      set((state) => {
+        const dup: DrumEvent = {
+          ...original,
+          id: newId,
+          startTime: original.startTime + (original.duration || 0.25),
+        };
+        state.events.push(dup);
+        state.updatedAt = new Date().toISOString();
+      });
+      return newId;
+    },
 
     setTimelineEvents: (events, mode = 'replace') =>
       set((state) => {
@@ -242,6 +347,40 @@ export const useProjectStore = create<ProjectStore>()(
         const neededBars = Math.max(1, Math.ceil(endTime / secondsPerBar));
 
         state.bars = mode === 'merge' ? Math.max(state.bars, neededBars) : neededBars;
+        state.updatedAt = new Date().toISOString();
+      }),
+
+    setQuantizeStrength: (v) =>
+      set((state) => {
+        state.quantizeStrength = Math.max(0, Math.min(1, v));
+        state.updatedAt = new Date().toISOString();
+      }),
+
+    setSwing: (v) =>
+      set((state) => {
+        state.swing = Math.max(0, Math.min(1, v));
+        state.updatedAt = new Date().toISOString();
+      }),
+
+    setHumanize: (v) =>
+      set((state) => {
+        state.humanize = Math.max(0, Math.min(1, v));
+        state.updatedAt = new Date().toISOString();
+      }),
+
+    applyQuantizeToSelection: (ids) =>
+      set((state) => {
+        const targetSet = new Set(ids);
+        const applyToAll = ids.length === 0;
+        state.events.forEach((event) => {
+          if (!applyToAll && !targetSet.has(event.id)) return;
+          if ((event as DrumEvent & { locked?: boolean }).locked) return;
+          const beat = secondsToBeat(event.startTime, state.bpm);
+          let next = snapBeat(beat, state.quantizeStrength);
+          next = applySwing(next, state.swing);
+          next = applyHumanize(next, state.humanize);
+          event.startTime = beatToSeconds(Math.max(0, next), state.bpm);
+        });
         state.updatedAt = new Date().toISOString();
       }),
 
@@ -277,3 +416,6 @@ export const selectKit = (s: ProjectStore) => s.kit;
 export const selectProjectName = (s: ProjectStore) => s.name;
 export const selectEventsByLane = (laneId: string) => (s: ProjectStore) =>
   s.events.filter((e) => e.laneId === laneId);
+export const selectQuantizeStrength = (s: ProjectStore) => s.quantizeStrength;
+export const selectSwing = (s: ProjectStore) => s.swing;
+export const selectHumanize = (s: ProjectStore) => s.humanize;
