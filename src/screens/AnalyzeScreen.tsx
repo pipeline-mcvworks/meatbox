@@ -33,7 +33,6 @@ export default function AnalyzeScreen(): React.JSX.Element {
 
   const handleEditTimeline = () => {
     // No-op for now beyond navigation (placeholder)
-    console.log('Edit Timeline pressed');
   };
 
   const handleTryAgain = () => {
