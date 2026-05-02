@@ -77,33 +77,44 @@ export default function AnalyzeScreen(): React.JSX.Element {
     };
   }, [recordingUri, recordingDuration, setWaveformPeaks]);
 
-  const detectedHits = useMemo(() => {
+  const analysisResult = useMemo(() => {
     if (loading || waveformPeaks.length === 0 || recordingDuration <= 0) {
-      return [];
+      return {
+        detectedHits: [],
+        classifiedHits: [],
+        quantizedHits: [],
+      };
     }
 
     const analysisSampleRate = waveformPeaks.length / recordingDuration;
-    const hits = detectOnsets(waveformPeaks, {
+    const detectedHits = detectOnsets(waveformPeaks, {
       sampleRate: analysisSampleRate,
       sensitivity,
     });
-    const classifiedHits = classifyHits(waveformPeaks, hits, {
+    const classifiedHits = classifyHits(waveformPeaks, detectedHits, {
       sampleRate: analysisSampleRate,
     });
-
-    return quantizeHits<ClassifiedHit>(classifiedHits, {
+    const quantizedHits = quantizeHits<ClassifiedHit>(classifiedHits, {
       bpm,
       division: 16,
       strength: 100,
     });
+
+    return {
+      detectedHits,
+      classifiedHits,
+      quantizedHits,
+    };
   }, [loading, waveformPeaks, recordingDuration, sensitivity, bpm]);
 
+  const { detectedHits, classifiedHits, quantizedHits } = analysisResult;
+
   const labelSummary = useMemo(() => {
-    if (detectedHits.length === 0) {
+    if (quantizedHits.length === 0) {
       return 'No hits detected yet';
     }
 
-    const counts = detectedHits.reduce<Record<string, number>>((acc, hit) => {
+    const counts = quantizedHits.reduce<Record<string, number>>((acc, hit) => {
       acc[hit.label] = (acc[hit.label] ?? 0) + 1;
       return acc;
     }, {});
@@ -111,12 +122,12 @@ export default function AnalyzeScreen(): React.JSX.Element {
     return Object.entries(counts)
       .map(([label, count]) => `${count} ${label}`)
       .join(' • ');
-  }, [detectedHits]);
+  }, [quantizedHits]);
 
-  const autoCleanDisabled = loading || detectedHits.length === 0;
+  const autoCleanDisabled = loading || quantizedHits.length === 0;
 
   const handleAutoClean = () => {
-    const timelineEvents = createTimelineEvents(detectedHits, detectedHits, detectedHits, {
+    const timelineEvents = createTimelineEvents(detectedHits, classifiedHits, quantizedHits, {
       bpm,
       lanes,
     });
@@ -142,7 +153,7 @@ export default function AnalyzeScreen(): React.JSX.Element {
             width={waveformWidth}
             height={220}
             scrubPosition={0}
-            hits={detectedHits}
+            hits={quantizedHits}
           />
         )}
       </View>
@@ -153,7 +164,7 @@ export default function AnalyzeScreen(): React.JSX.Element {
         </View>
         <SensitivitySlider value={sensitivity} onChange={setSensitivity} width={waveformWidth} />
         <Text style={styles.hitCountText}>
-          {detectedHits.length} {detectedHits.length === 1 ? 'hit' : 'hits'} detected
+          {quantizedHits.length} {quantizedHits.length === 1 ? 'hit' : 'hits'} detected
         </Text>
         <Text style={styles.labelSummaryText}>{labelSummary}</Text>
       </View>
