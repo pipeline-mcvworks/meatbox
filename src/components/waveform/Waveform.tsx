@@ -1,7 +1,15 @@
 import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
-import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import { Canvas, Circle, Path, Skia } from '@shopify/react-native-skia';
 import { colors, spacing, typography } from '../../theme';
+
+interface WaveformHitMarker {
+  timeSeconds?: number;
+  originalTimeSeconds?: number;
+  quantizedTimeSeconds?: number;
+  confidence?: number;
+  label?: string;
+}
 
 interface WaveformProps {
   peaks: number[];
@@ -10,6 +18,7 @@ interface WaveformProps {
   height?: number;
   /** Position of the scrub marker as a fraction 0–1 */
   scrubPosition?: number;
+  hits?: WaveformHitMarker[];
 }
 
 const DEFAULT_HEIGHT = 200;
@@ -18,10 +27,11 @@ const WAVEFORM_COLOR = colors.neonGreen;
 const SCRUB_COLOR = colors.white;
 const HIT_MARKER_COLOR = colors.accent;
 const CENTER_LINE_COLOR = 'rgba(255, 255, 255, 0.25)';
+const LOW_CONFIDENCE_MARKER_COLOR = 'rgba(255, 255, 255, 0.55)';
 
 /**
  * Renders a waveform visualization using Skia.
- * Shows centered waveform bars, a scrub marker, duration text, and a hit marker placeholder.
+ * Shows centered waveform bars, a scrub marker, duration text, and confidence-scaled hit markers.
  */
 export default function Waveform({
   peaks,
@@ -29,6 +39,7 @@ export default function Waveform({
   width,
   height = DEFAULT_HEIGHT,
   scrubPosition = 0,
+  hits = [],
 }: WaveformProps): React.JSX.Element {
   const waveformHeight = Math.max(0, height - HIT_MARKER_AREA_HEIGHT);
   const midY = waveformHeight / 2;
@@ -39,7 +50,7 @@ export default function Waveform({
   const waveformPath = Skia.Path.Make();
   const centerLinePath = Skia.Path.Make();
   const scrubPath = Skia.Path.Make();
-  const hitMarkersPath = Skia.Path.Make();
+  const hitMarkersBaselinePath = Skia.Path.Make();
 
   centerLinePath.moveTo(0, midY);
   centerLinePath.lineTo(width, midY);
@@ -63,8 +74,21 @@ export default function Waveform({
   scrubPath.lineTo(scrubX, waveformHeight);
 
   const hitMarkerY = waveformHeight + HIT_MARKER_AREA_HEIGHT / 2;
-  hitMarkersPath.moveTo(0, hitMarkerY);
-  hitMarkersPath.lineTo(width, hitMarkerY);
+  hitMarkersBaselinePath.moveTo(0, hitMarkerY);
+  hitMarkersBaselinePath.lineTo(width, hitMarkerY);
+
+  const visibleHits = hits
+    .map((hit, index) => {
+      const markerTime = hit.quantizedTimeSeconds ?? hit.timeSeconds ?? hit.originalTimeSeconds ?? 0;
+      const confidence = clamp(hit.confidence ?? 0.5, 0, 1);
+
+      return {
+        id: `${index}-${markerTime}`,
+        x: durationSeconds > 0 ? clamp(markerTime / durationSeconds, 0, 1) * width : 0,
+        confidence,
+      };
+    })
+    .filter((hit) => Number.isFinite(hit.x));
 
   return (
     <View style={styles.container}>
@@ -88,15 +112,25 @@ export default function Waveform({
           strokeWidth={1}
         />
         <Path
-          path={hitMarkersPath}
+          path={hitMarkersBaselinePath}
           color={HIT_MARKER_COLOR}
           style="stroke"
           strokeWidth={1}
         />
+        {visibleHits.map((hit) => (
+          <Circle
+            key={hit.id}
+            cx={hit.x}
+            cy={hitMarkerY}
+            r={4 + hit.confidence * 5}
+            color={hit.confidence >= 0.45 ? HIT_MARKER_COLOR : LOW_CONFIDENCE_MARKER_COLOR}
+            opacity={0.45 + hit.confidence * 0.55}
+          />
+        ))}
       </Canvas>
       <View style={[styles.footer, { width }]}> 
         <Text style={styles.durationText}>{formatDuration(durationSeconds)}</Text>
-        <Text style={styles.hitMarkerText}>Hit markers</Text>
+        <Text style={styles.hitMarkerText}>{hits.length} hit markers</Text>
       </View>
     </View>
   );
