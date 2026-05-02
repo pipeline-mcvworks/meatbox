@@ -6,7 +6,15 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { colors, spacing, typography } from '../theme';
 import { useProjectStore } from '../store/projectStore';
@@ -20,6 +28,7 @@ import { TransportBar } from '../components/transport';
 import { audioPlaybackService } from '../audio';
 import type { PlaybackState, SchedulerEvent, SampleKey } from '../audio/types';
 import type { DrumEvent, Lane } from '../state/types';
+import { saveProject } from '../persistence';
 
 // Optional BottomSheetModalProvider — use it if installed, otherwise no-op.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,6 +113,7 @@ export default function TimelineScreen(): React.JSX.Element {
   const [playbackState, setPlaybackState] = useState<PlaybackState>(
     DEFAULT_PLAYBACK_STATE,
   );
+  const [saving, setSaving] = useState(false);
   const samplesLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -157,6 +167,22 @@ export default function TimelineScreen(): React.JSX.Element {
     if (setBpm) setBpm(bpm);
   }, []);
 
+  const handleSaveProject = useCallback(async () => {
+    if (!project.id) {
+      Alert.alert('No project', 'Nothing to save.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveProject(project);
+      Alert.alert('Saved', `"${project.name}" saved locally.`);
+    } catch (e) {
+      Alert.alert('Save failed', (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }, [project]);
+
   // Group events by lane for fast rendering.
   const eventsByLane = useMemo(() => {
     const map = new Map<string, DrumEvent[]>();
@@ -184,7 +210,22 @@ export default function TimelineScreen(): React.JSX.Element {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <BottomSheetModalProvider>
         <View style={styles.container}>
-          <Text style={styles.title}>{project.name}</Text>
+          <View style={styles.header}>
+            <Text style={styles.title}>{project.name}</Text>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleSaveProject}
+              disabled={saving}
+              accessibilityRole="button"
+              accessibilityLabel="Save Project"
+            >
+              {saving ? (
+                <ActivityIndicator color={colors.background} />
+              ) : (
+                <Text style={styles.saveButtonText}>Save Project</Text>
+              )}
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.timelineContainer}>
             <ScrollView horizontal showsHorizontalScrollIndicator>
@@ -249,14 +290,34 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     paddingTop: spacing[8],
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing[4],
+    marginBottom: spacing[1],
+  },
   title: {
     color: colors.neonYellow,
     fontSize: typography.sizes['2xl'],
     fontWeight: typography.weights.bold,
     letterSpacing: typography.letterSpacings.wide,
-    textAlign: 'center',
-    marginBottom: spacing[1],
-    paddingHorizontal: spacing[4],
+    flex: 1,
+  },
+  saveButton: {
+    backgroundColor: colors.neonYellow,
+    paddingVertical: spacing[2],
+    paddingHorizontal: spacing[3],
+    borderRadius: 6,
+    minWidth: 110,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButtonText: {
+    color: colors.background,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    letterSpacing: typography.letterSpacings.wide,
   },
   timelineContainer: {
     flex: 1,
