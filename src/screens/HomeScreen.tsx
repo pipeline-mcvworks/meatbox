@@ -1,27 +1,92 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
-import { useProjectStore } from '../store/projectStore';
 import ControlsButton from '../components/controls/ControlsButton';
+import { EmptyState } from '../components/visualizer';
 
-const RECENT_PROJECTS = [
-  { id: '1', name: 'My First Beat', date: '2025-01-15' },
-  { id: '2', name: 'Late Night Jam', date: '2025-01-12' },
-  { id: '3', name: 'Demo Project', date: '2025-01-10' },
-];
+// Project store loader is optional (different phases expose different APIs).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let useProjectStore: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+  useProjectStore = require('../store/projectStore').useProjectStore;
+} catch {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+    useProjectStore = require('../state/projectStore').useProjectStore;
+  } catch {
+    useProjectStore = null;
+  }
+}
+
+interface RecentProject {
+  id: string;
+  name: string;
+  date: string;
+}
 
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<any>();
-  const loadDefaultProject = useProjectStore((state) => state.loadDefaultProject);
+
+  const recentProjects: RecentProject[] = useMemo(() => {
+    if (!useProjectStore) return [];
+    try {
+      // Try to read a list of saved projects from store if available.
+      const state = useProjectStore.getState?.();
+      const list = state?.recentProjects ?? state?.projects ?? null;
+      if (Array.isArray(list)) {
+        return list.map((p: any) => ({
+          id: String(p.id ?? p.title ?? Math.random()),
+          name: String(p.name ?? p.title ?? 'Untitled'),
+          date: String(p.updatedAt ?? p.createdAt ?? ''),
+        }));
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }, []);
 
   const handleDemoProject = () => {
-    loadDefaultProject();
+    let loaded = false;
+    try {
+      const state = useProjectStore?.getState?.();
+      if (state?.loadDefaultProject) {
+        state.loadDefaultProject();
+        loaded = true;
+      }
+    } catch {
+      // ignore
+    }
+    if (!loaded) {
+      try {
+        const loadDefaultProject = useProjectStore?.((s: any) => s.loadDefaultProject);
+        if (typeof loadDefaultProject === 'function') {
+          loadDefaultProject();
+        }
+      } catch {
+        // ignore
+      }
+    }
     navigation.navigate('Timeline');
   };
 
-  const renderProjectItem = ({ item }: { item: { id: string; name: string; date: string } }) => (
-    <TouchableOpacity style={styles.projectItem}>
+  const handleVisualizer = () => {
+    try {
+      navigation.navigate('Visualizer');
+    } catch {
+      // ignore
+    }
+  };
+
+  const renderProjectItem = ({ item }: { item: RecentProject }) => (
+    <TouchableOpacity
+      style={styles.projectItem}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`Open project ${item.name}`}
+    >
       <Text style={styles.projectName}>{item.name}</Text>
       <Text style={styles.projectDate}>{item.date}</Text>
     </TouchableOpacity>
@@ -39,20 +104,35 @@ export default function HomeScreen(): React.JSX.Element {
           variant="primary"
         />
         <ControlsButton
-          title="Demo Project"
+          title="Try Demo Beat"
           onPress={handleDemoProject}
+          variant="secondary"
+        />
+        <ControlsButton
+          title="Visualizer"
+          onPress={handleVisualizer}
           variant="secondary"
         />
       </View>
 
       <View style={styles.recentSection}>
         <Text style={styles.sectionTitle}>Recent Projects</Text>
-        <FlatList
-          data={RECENT_PROJECTS}
-          keyExtractor={(item) => item.id}
-          renderItem={renderProjectItem}
-          style={styles.projectList}
-        />
+        {recentProjects.length === 0 ? (
+          <EmptyState
+            icon="🥁"
+            title="No projects yet"
+            body="Tap Start Recording to capture a beat, or try the demo to see how it works."
+            ctaLabel="Try Demo Beat"
+            onCta={handleDemoProject}
+          />
+        ) : (
+          <FlatList
+            data={recentProjects}
+            keyExtractor={(item) => item.id}
+            renderItem={renderProjectItem}
+            style={styles.projectList}
+          />
+        )}
       </View>
     </View>
   );
@@ -72,6 +152,9 @@ const styles = StyleSheet.create({
     letterSpacing: typography.letterSpacings.wide,
     textAlign: 'center',
     marginBottom: spacing[2],
+    textShadowColor: 'rgba(0, 245, 255, 0.5)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 12,
   },
   tagline: {
     color: colors.neonGreen,
@@ -83,6 +166,7 @@ const styles = StyleSheet.create({
   buttonGroup: {
     gap: spacing[3],
     marginBottom: spacing[8],
+    alignItems: 'center',
   },
   recentSection: {
     flex: 1,
