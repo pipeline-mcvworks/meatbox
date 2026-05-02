@@ -15,14 +15,15 @@ import {
   selectWaveformPeaks,
   selectRecordingDuration,
 } from '../state/audioStore';
+import { useProjectStore, selectBpm, selectLanes } from '../state/projectStore';
 import { generateWaveformPeaks } from '../analysis/waveform';
 import { detectOnsets } from '../analysis/onsetDetection';
 import { classifyHits } from '../analysis/classifyHit';
 import { quantizeHits } from '../analysis/quantize';
-import { ClassifiedHit } from '../analysis/types';
+import { createTimelineEvents } from '../analysis/createTimelineEvents';
+import type { ClassifiedHit } from '../analysis/types';
 import { Waveform } from '../components/waveform';
 
-const DEFAULT_PROJECT_BPM = 120;
 const DEFAULT_SENSITIVITY = 55;
 
 export default function AnalyzeScreen(): React.JSX.Element {
@@ -32,6 +33,9 @@ export default function AnalyzeScreen(): React.JSX.Element {
   const waveformPeaks = useAudioStore(selectWaveformPeaks);
   const recordingDuration = useAudioStore(selectRecordingDuration);
   const setWaveformPeaks = useAudioStore((s) => s.setWaveformPeaks);
+  const bpm = useProjectStore(selectBpm);
+  const lanes = useProjectStore(selectLanes);
+  const setTimelineEvents = useProjectStore((s) => s.setTimelineEvents);
   const [loading, setLoading] = useState(true);
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
 
@@ -73,33 +77,48 @@ export default function AnalyzeScreen(): React.JSX.Element {
     };
   }, [recordingUri, recordingDuration, setWaveformPeaks]);
 
+  const canAnalyze = !loading && waveformPeaks.length > 0 && recordingDuration > 0;
+  const analysisSampleRate = canAnalyze ? waveformPeaks.length / recordingDuration : 0;
+
   const detectedHits = useMemo(() => {
-    if (loading || waveformPeaks.length === 0 || recordingDuration <= 0) {
+    if (!canAnalyze || analysisSampleRate <= 0) {
       return [];
     }
 
-    const analysisSampleRate = waveformPeaks.length / recordingDuration;
-    const hits = detectOnsets(waveformPeaks, {
+    return detectOnsets(waveformPeaks, {
       sampleRate: analysisSampleRate,
       sensitivity,
     });
-    const classifiedHits = classifyHits(waveformPeaks, hits, {
+  }, [canAnalyze, waveformPeaks, analysisSampleRate, sensitivity]);
+
+  const classifiedHits = useMemo(() => {
+    if (!canAnalyze || analysisSampleRate <= 0 || detectedHits.length === 0) {
+      return [];
+    }
+
+    return classifyHits(waveformPeaks, detectedHits, {
       sampleRate: analysisSampleRate,
     });
+  }, [canAnalyze, waveformPeaks, detectedHits, analysisSampleRate]);
+
+  const quantizedHits = useMemo(() => {
+    if (classifiedHits.length === 0) {
+      return [];
+    }
 
     return quantizeHits<ClassifiedHit>(classifiedHits, {
-      bpm: DEFAULT_PROJECT_BPM,
+      bpm,
       division: 16,
       strength: 100,
     });
-  }, [loading, waveformPeaks, recordingDuration, sensitivity]);
+  }, [classifiedHits, bpm]);
 
   const labelSummary = useMemo(() => {
-    if (detectedHits.length === 0) {
+    if (quantizedHits.length === 0) {
       return 'No hits detected yet';
     }
 
-    const counts = detectedHits.reduce<Record<string, number>>((acc, hit) => {
+    const counts = quantizedHits.reduce<Record<string, number>>((acc, hit) => {
       acc[hit.label] = (acc[hit.label] ?? 0) + 1;
       return acc;
     }, {});
@@ -107,10 +126,18 @@ export default function AnalyzeScreen(): React.JSX.Element {
     return Object.entries(counts)
       .map(([label, count]) => `${count} ${label}`)
       .join(' • ');
-  }, [detectedHits]);
+  }, [quantizedHits]);
 
-  const handleEditTimeline = () => {
-    // Timeline editing will be wired up in a later phase.
+  const autoCleanDisabled = loading || quantizedHits.length === 0;
+
+  const handleAutoClean = () => {
+    const timelineEvents = createTimelineEvents(detectedHits, classifiedHits, quantizedHits, {
+      bpm,
+      lanes,
+    });
+
+    setTimelineEvents(timelineEvents, 'replace');
+    navigation.navigate('Timeline' as never);
   };
 
   const handleTryAgain = () => {
@@ -130,7 +157,7 @@ export default function AnalyzeScreen(): React.JSX.Element {
             width={waveformWidth}
             height={220}
             scrubPosition={0}
-            hits={detectedHits}
+            hits={quantizedHits}
           />
         )}
       </View>
@@ -141,13 +168,17 @@ export default function AnalyzeScreen(): React.JSX.Element {
         </View>
         <SensitivitySlider value={sensitivity} onChange={setSensitivity} width={waveformWidth} />
         <Text style={styles.hitCountText}>
-          {detectedHits.length} {detectedHits.length === 1 ? 'hit' : 'hits'} detected
+          {quantizedHits.length} {quantizedHits.length === 1 ? 'hit' : 'hits'} detected
         </Text>
         <Text style={styles.labelSummaryText}>{labelSummary}</Text>
       </View>
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.button} onPress={handleEditTimeline}>
-          <Text style={styles.buttonText}>Edit Timeline</Text>
+        <TouchableOpacity
+          style={[styles.button, autoCleanDisabled && styles.buttonDisabled]}
+          onPress={handleAutoClean}
+          disabled={autoCleanDisabled}
+        >
+          <Text style={[styles.buttonText, autoCleanDisabled && styles.buttonTextDisabled]}>Auto Clean</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.button} onPress={handleTryAgain}>
           <Text style={styles.buttonText}>Try Again</Text>
@@ -291,9 +322,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[6],
     borderRadius: 8,
   },
+  buttonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+  },
   buttonText: {
     color: colors.background,
     fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
+  },
+  buttonTextDisabled: {
+    color: 'rgba(255, 255, 255, 0.5)',
   },
 });

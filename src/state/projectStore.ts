@@ -1,16 +1,22 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import type { TimelineEvent } from '../analysis/createTimelineEvents';
 import type { DrumEvent, Kit, Lane } from './types';
 
 // ---------------------------------------------------------------------------
 // Default project (mirrors the shape from T-002 defaultProject)
 // ---------------------------------------------------------------------------
 
+export type TimelineEventMergeMode = 'replace' | 'merge';
+
+const UNKNOWN_LANE: Lane = { id: 'lane-unknown', name: 'Unknown', instrument: 'unknown', muted: false, solo: false, volume: 0.75, pan: 0, color: '#9E9E9E', sampleId: 'sample-clap' };
+
 const DEFAULT_LANES: Lane[] = [
   { id: 'lane-kick',  name: 'Kick',   instrument: 'kick',   muted: false, solo: false, volume: 1, pan: 0, color: '#E57373', sampleId: 'sample-kick' },
   { id: 'lane-snare', name: 'Snare',  instrument: 'snare',  muted: false, solo: false, volume: 1, pan: 0, color: '#81C784', sampleId: 'sample-snare' },
   { id: 'lane-hihat', name: 'Hi-Hat', instrument: 'hihat',  muted: false, solo: false, volume: 1, pan: 0, color: '#64B5F6', sampleId: 'sample-hihat' },
   { id: 'lane-clap',  name: 'Clap',   instrument: 'clap',   muted: false, solo: false, volume: 1, pan: 0, color: '#FFD54F', sampleId: 'sample-clap' },
+  UNKNOWN_LANE,
 ];
 
 const DEFAULT_EVENTS: DrumEvent[] = [
@@ -123,6 +129,7 @@ export interface ProjectActions {
   addEvent: (event: DrumEvent) => void;
   updateEvent: (id: string, patch: Partial<DrumEvent>) => void;
   deleteEvent: (id: string) => void;
+  setTimelineEvents: (events: TimelineEvent[], mode?: TimelineEventMergeMode) => void;
   // Kit actions
   setKit: (kit: Kit) => void;
 }
@@ -215,6 +222,29 @@ export const useProjectStore = create<ProjectStore>()(
         state.updatedAt = new Date().toISOString();
       }),
 
+    setTimelineEvents: (events, mode = 'replace') =>
+      set((state) => {
+        ensureUnknownLane(state.lanes);
+
+        const nextEvents: DrumEvent[] = events.map((event) => ({ ...event }));
+
+        if (mode === 'merge') {
+          state.events.push(...nextEvents);
+        } else {
+          state.events = nextEvents;
+        }
+
+        const endTime = state.events.reduce(
+          (max, event) => Math.max(max, event.startTime + event.duration),
+          0,
+        );
+        const secondsPerBar = Math.max(0.001, (60 / Math.max(1, state.bpm)) * 4);
+        const neededBars = Math.max(1, Math.ceil(endTime / secondsPerBar));
+
+        state.bars = mode === 'merge' ? Math.max(state.bars, neededBars) : neededBars;
+        state.updatedAt = new Date().toISOString();
+      }),
+
     setKit: (kit) =>
       set((state) => {
         state.kit = kit;
@@ -229,6 +259,12 @@ export const useProjectStore = create<ProjectStore>()(
       }),
   }))
 );
+
+function ensureUnknownLane(lanes: Lane[]): void {
+  if (!lanes.some((lane) => lane.id === UNKNOWN_LANE.id)) {
+    lanes.push({ ...UNKNOWN_LANE });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Typed selectors
