@@ -97,3 +97,4 @@ export const selectWaveformPeaks = (s: AudioStore) => s.waveformPeaks;
 export const selectAnalysisStatus = (s: AudioStore) => s.analysisStatus;
 export const selectIsRecording = (s: AudioStore) => s.recordingState === 'recording';
 export const selectLiveInputLevel = (s: AudioStore) => s.liveInputLevel;
+export const selectRecordingDuration = (s: AudioStore) => s.recordingDuration;
