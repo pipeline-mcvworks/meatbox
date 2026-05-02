@@ -1,3 +1,14 @@
+/**
+ * HomeScreen
+ *
+ * Entry point. Shows app title, primary actions, and recent projects.
+ * The "Try Demo Beat" button loads the defaultProject fixture into the
+ * project store (if available) and navigates to the Timeline screen.
+ *
+ * Store import is guarded so the screen compiles even when projectStore
+ * has not been wired up yet — it falls back to passing the fixture as a
+ * navigation param.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -6,20 +17,34 @@ import ControlsButton from '../components/controls/ControlsButton';
 import { EmptyState } from '../components/visualizer';
 import { defaultProject } from '../fixtures/defaultProject';
 
-// Project store loader is optional (different phases expose different APIs).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let useProjectStore: any = null;
+// ---------------------------------------------------------------------------
+// Optional project store — may not exist in all build phases.
+// We import it statically but wrap in a try/catch at module level so that
+// a missing module does not crash the bundle.
+// ---------------------------------------------------------------------------
+type ProjectStoreHook = {
+  getState: () => {
+    recentProjects?: unknown[];
+    projects?: unknown[];
+    loadDefaultProject?: () => void;
+    loadProject?: (p: unknown) => void;
+    setProject?: (p: unknown) => void;
+  };
+  subscribe?: (cb: () => void) => () => void;
+};
+
+let projectStoreModule: ProjectStoreHook | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
-  useProjectStore = require('../store/projectStore').useProjectStore;
-} catch {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
-    useProjectStore = require('../state/projectStore').useProjectStore;
-  } catch {
-    useProjectStore = null;
+  const mod = require('../state/projectStore');
+  if (mod && typeof mod.useProjectStore?.getState === 'function') {
+    projectStoreModule = mod.useProjectStore as ProjectStoreHook;
   }
+} catch {
+  projectStoreModule = null;
 }
+
+// ---------------------------------------------------------------------------
 
 interface RecentProject {
   id: string;
@@ -27,74 +52,63 @@ interface RecentProject {
   date: string;
 }
 
+function readRecentProjects(): RecentProject[] {
+  if (!projectStoreModule) return [];
+  try {
+    const state = projectStoreModule.getState();
+    const list = state?.recentProjects ?? state?.projects ?? null;
+    if (Array.isArray(list)) {
+      return list.map((p: any) => ({
+        id: String(p.id ?? p.title ?? Math.random()),
+        name: String(p.name ?? p.title ?? 'Untitled'),
+        date: String(p.updatedAt ?? p.createdAt ?? ''),
+      }));
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<any>();
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>(
+    () => readRecentProjects(),
+  );
 
-  // Reactive recent-projects list from store (if available).
-  // We use a useState + useEffect pattern so the store subscription is
-  // reactive rather than a one-shot getState() snapshot inside useMemo.
-  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
-
+  // Subscribe to store changes so the list stays fresh.
   useEffect(() => {
-    if (!useProjectStore) return;
-    const readProjects = () => {
-      try {
-        const state = useProjectStore.getState?.();
-        const list = state?.recentProjects ?? state?.projects ?? null;
-        if (Array.isArray(list)) {
-          setRecentProjects(
-            list.map((p: any) => ({
-              id: String(p.id ?? p.title ?? Math.random()),
-              name: String(p.name ?? p.title ?? 'Untitled'),
-              date: String(p.updatedAt ?? p.createdAt ?? ''),
-            }))
-          );
-          return;
-        }
-      } catch {
-        // ignore
-      }
-      setRecentProjects([]);
-    };
-
-    readProjects();
-
-    // Subscribe to store changes if the store exposes subscribe().
-    let unsubscribe: (() => void) | undefined;
-    try {
-      unsubscribe = useProjectStore.subscribe?.(readProjects);
-    } catch {
-      // ignore
-    }
-    return () => {
-      unsubscribe?.();
-    };
+    if (!projectStoreModule?.subscribe) return;
+    const unsub = projectStoreModule.subscribe(() => {
+      setRecentProjects(readRecentProjects());
+    });
+    return unsub;
   }, []);
 
   const handleDemoProject = useCallback(() => {
-    // 1. Try to load via store action (preferred — keeps store in sync).
     let loadedViaStore = false;
-    try {
-      const state = useProjectStore?.getState?.();
-      if (typeof state?.loadDefaultProject === 'function') {
-        state.loadDefaultProject();
-        loadedViaStore = true;
-      } else if (typeof state?.loadProject === 'function') {
-        state.loadProject(defaultProject);
-        loadedViaStore = true;
-      } else if (typeof state?.setProject === 'function') {
-        state.setProject(defaultProject);
-        loadedViaStore = true;
+    if (projectStoreModule) {
+      try {
+        const state = projectStoreModule.getState();
+        if (typeof state?.loadDefaultProject === 'function') {
+          state.loadDefaultProject();
+          loadedViaStore = true;
+        } else if (typeof state?.loadProject === 'function') {
+          state.loadProject(defaultProject);
+          loadedViaStore = true;
+        } else if (typeof state?.setProject === 'function') {
+          state.setProject(defaultProject);
+          loadedViaStore = true;
+        }
+      } catch {
+        // ignore — fall through to nav-param path
       }
-    } catch {
-      // ignore
     }
 
-    // 2. If store action unavailable, pass the fixture directly as a nav param
-    //    so the Timeline screen can render it without a store.
     if (loadedViaStore) {
       navigation.navigate('Timeline');
     } else {
+      // Store unavailable: pass fixture as nav param so Timeline can render it.
       navigation.navigate('Timeline', { demoProject: defaultProject });
     }
   }, [navigation]);
