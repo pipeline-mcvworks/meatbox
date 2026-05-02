@@ -1,5 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  useWindowDimensions,
+  PanResponder,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
 import {
@@ -9,7 +16,14 @@ import {
   selectRecordingDuration,
 } from '../state/audioStore';
 import { generateWaveformPeaks } from '../analysis/waveform';
+import { detectOnsets } from '../analysis/onsetDetection';
+import { classifyHits } from '../analysis/classifyHit';
+import { quantizeHits } from '../analysis/quantize';
+import { ClassifiedHit } from '../analysis/types';
 import { Waveform } from '../components/waveform';
+
+const DEFAULT_PROJECT_BPM = 120;
+const DEFAULT_SENSITIVITY = 55;
 
 export default function AnalyzeScreen(): React.JSX.Element {
   const navigation = useNavigation();
@@ -19,6 +33,7 @@ export default function AnalyzeScreen(): React.JSX.Element {
   const recordingDuration = useAudioStore(selectRecordingDuration);
   const setWaveformPeaks = useAudioStore((s) => s.setWaveformPeaks);
   const [loading, setLoading] = useState(true);
+  const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
 
   const waveformWidth = Math.max(0, width - spacing[4] * 2);
 
@@ -58,6 +73,42 @@ export default function AnalyzeScreen(): React.JSX.Element {
     };
   }, [recordingUri, recordingDuration, setWaveformPeaks]);
 
+  const detectedHits = useMemo(() => {
+    if (loading || waveformPeaks.length === 0 || recordingDuration <= 0) {
+      return [];
+    }
+
+    const analysisSampleRate = waveformPeaks.length / recordingDuration;
+    const hits = detectOnsets(waveformPeaks, {
+      sampleRate: analysisSampleRate,
+      sensitivity,
+    });
+    const classifiedHits = classifyHits(waveformPeaks, hits, {
+      sampleRate: analysisSampleRate,
+    });
+
+    return quantizeHits<ClassifiedHit>(classifiedHits, {
+      bpm: DEFAULT_PROJECT_BPM,
+      division: 16,
+      strength: 100,
+    });
+  }, [loading, waveformPeaks, recordingDuration, sensitivity]);
+
+  const labelSummary = useMemo(() => {
+    if (detectedHits.length === 0) {
+      return 'No hits detected yet';
+    }
+
+    const counts = detectedHits.reduce<Record<string, number>>((acc, hit) => {
+      acc[hit.label] = (acc[hit.label] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(counts)
+      .map(([label, count]) => `${count} ${label}`)
+      .join(' • ');
+  }, [detectedHits]);
+
   const handleEditTimeline = () => {
     // Timeline editing will be wired up in a later phase.
   };
@@ -79,8 +130,20 @@ export default function AnalyzeScreen(): React.JSX.Element {
             width={waveformWidth}
             height={220}
             scrubPosition={0}
+            hits={detectedHits}
           />
         )}
+      </View>
+      <View style={styles.analysisPanel}>
+        <View style={styles.analysisHeader}>
+          <Text style={styles.analysisTitle}>Sensitivity</Text>
+          <Text style={styles.analysisValue}>{Math.round(sensitivity)}%</Text>
+        </View>
+        <SensitivitySlider value={sensitivity} onChange={setSensitivity} width={waveformWidth} />
+        <Text style={styles.hitCountText}>
+          {detectedHits.length} {detectedHits.length === 1 ? 'hit' : 'hits'} detected
+        </Text>
+        <Text style={styles.labelSummaryText}>{labelSummary}</Text>
       </View>
       <View style={styles.buttonRow}>
         <TouchableOpacity style={styles.button} onPress={handleEditTimeline}>
@@ -92,6 +155,48 @@ export default function AnalyzeScreen(): React.JSX.Element {
       </View>
     </View>
   );
+}
+
+interface SensitivitySliderProps {
+  value: number;
+  onChange: (value: number) => void;
+  width: number;
+}
+
+function SensitivitySlider({ value, onChange, width }: SensitivitySliderProps): React.JSX.Element {
+  const [sliderWidth, setSliderWidth] = useState(Math.max(1, width));
+  const fillPercent = `${clamp(value, 0, 100)}%`;
+
+  const updateValueFromLocation = (locationX: number) => {
+    const nextValue = clamp((locationX / Math.max(1, sliderWidth)) * 100, 0, 100);
+    onChange(nextValue);
+  };
+
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (event) => {
+      updateValueFromLocation(event.nativeEvent.locationX);
+    },
+    onPanResponderMove: (event) => {
+      updateValueFromLocation(event.nativeEvent.locationX);
+    },
+  });
+
+  return (
+    <View
+      style={[styles.sliderTrack, { width }]}
+      onLayout={(event) => setSliderWidth(event.nativeEvent.layout.width)}
+      {...panResponder.panHandlers}
+    >
+      <View style={[styles.sliderFill, { width: fillPercent }]} />
+      <View style={[styles.sliderThumb, { left: fillPercent }]} />
+    </View>
+  );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 const styles = StyleSheet.create({
@@ -118,6 +223,61 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: typography.sizes.md,
     marginBottom: spacing[4],
+  },
+  analysisPanel: {
+    width: '100%',
+    marginTop: spacing[3],
+  },
+  analysisHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing[2],
+  },
+  analysisTitle: {
+    color: colors.white,
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+  },
+  analysisValue: {
+    color: colors.neonGreen,
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+  },
+  sliderTrack: {
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  sliderFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(57, 255, 20, 0.32)',
+  },
+  sliderThumb: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    marginLeft: -9,
+    borderRadius: 9,
+    backgroundColor: colors.neonGreen,
+    borderColor: colors.white,
+    borderWidth: 1,
+  },
+  hitCountText: {
+    color: colors.white,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    marginTop: spacing[2],
+  },
+  labelSummaryText: {
+    color: colors.accent,
+    fontSize: typography.sizes.sm,
+    marginTop: spacing[1],
   },
   buttonRow: {
     flexDirection: 'row',
