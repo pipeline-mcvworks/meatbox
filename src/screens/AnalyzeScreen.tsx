@@ -15,14 +15,15 @@ import {
   selectWaveformPeaks,
   selectRecordingDuration,
 } from '../state/audioStore';
+import { useProjectStore, selectBpm, selectLanes } from '../state/projectStore';
 import { generateWaveformPeaks } from '../analysis/waveform';
 import { detectOnsets } from '../analysis/onsetDetection';
 import { classifyHits } from '../analysis/classifyHit';
 import { quantizeHits } from '../analysis/quantize';
-import { ClassifiedHit } from '../analysis/types';
+import { createTimelineEvents } from '../analysis/createTimelineEvents';
+import type { ClassifiedHit } from '../analysis/types';
 import { Waveform } from '../components/waveform';
 
-const DEFAULT_PROJECT_BPM = 120;
 const DEFAULT_SENSITIVITY = 55;
 
 export default function AnalyzeScreen(): React.JSX.Element {
@@ -32,6 +33,9 @@ export default function AnalyzeScreen(): React.JSX.Element {
   const waveformPeaks = useAudioStore(selectWaveformPeaks);
   const recordingDuration = useAudioStore(selectRecordingDuration);
   const setWaveformPeaks = useAudioStore((s) => s.setWaveformPeaks);
+  const bpm = useProjectStore(selectBpm);
+  const lanes = useProjectStore(selectLanes);
+  const setTimelineEvents = useProjectStore((s) => s.setTimelineEvents);
   const [loading, setLoading] = useState(true);
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
 
@@ -88,11 +92,11 @@ export default function AnalyzeScreen(): React.JSX.Element {
     });
 
     return quantizeHits<ClassifiedHit>(classifiedHits, {
-      bpm: DEFAULT_PROJECT_BPM,
+      bpm,
       division: 16,
       strength: 100,
     });
-  }, [loading, waveformPeaks, recordingDuration, sensitivity]);
+  }, [loading, waveformPeaks, recordingDuration, sensitivity, bpm]);
 
   const labelSummary = useMemo(() => {
     if (detectedHits.length === 0) {
@@ -109,8 +113,16 @@ export default function AnalyzeScreen(): React.JSX.Element {
       .join(' • ');
   }, [detectedHits]);
 
-  const handleEditTimeline = () => {
-    // Timeline editing will be wired up in a later phase.
+  const autoCleanDisabled = loading || detectedHits.length === 0;
+
+  const handleAutoClean = () => {
+    const timelineEvents = createTimelineEvents(detectedHits, detectedHits, detectedHits, {
+      bpm,
+      lanes,
+    });
+
+    setTimelineEvents(timelineEvents, 'replace');
+    navigation.navigate('Timeline' as never);
   };
 
   const handleTryAgain = () => {
@@ -146,8 +158,12 @@ export default function AnalyzeScreen(): React.JSX.Element {
         <Text style={styles.labelSummaryText}>{labelSummary}</Text>
       </View>
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.button} onPress={handleEditTimeline}>
-          <Text style={styles.buttonText}>Edit Timeline</Text>
+        <TouchableOpacity
+          style={[styles.button, autoCleanDisabled && styles.buttonDisabled]}
+          onPress={handleAutoClean}
+          disabled={autoCleanDisabled}
+        >
+          <Text style={[styles.buttonText, autoCleanDisabled && styles.buttonTextDisabled]}>Auto Clean</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.button} onPress={handleTryAgain}>
           <Text style={styles.buttonText}>Try Again</Text>
@@ -291,9 +307,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[6],
     borderRadius: 8,
   },
+  buttonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+  },
   buttonText: {
     color: colors.background,
     fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
+  },
+  buttonTextDisabled: {
+    color: 'rgba(255, 255, 255, 0.5)',
   },
 });
