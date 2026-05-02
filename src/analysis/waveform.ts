@@ -1,88 +1,217 @@
 import { Audio } from 'expo-av';
 
 const TARGET_PEAKS_COUNT = 1000;
+const PROCESSING_PLAYBACK_RATE = 4;
+const MIN_PROCESSING_TIMEOUT_MS = 3000;
+const PROCESSING_TIMEOUT_PADDING_MS = 1500;
+const SILENCE_THRESHOLD = 0.0001;
+
+type AudioSampleCallback = NonNullable<Parameters<Audio.Sound['setOnAudioSampleReceived']>[0]>;
+type AudioSample = Parameters<AudioSampleCallback>[0];
 
 /**
  * Reads an audio file at the given URI and produces a normalized peaks array.
- * The peaks array length is TARGET_PEAKS_COUNT (~1000 samples) for mobile rendering.
+ * The generated peaks are computed from real PCM frames emitted by expo-av while
+ * the recording is played back muted, then downsampled to a mobile-friendly size.
  * Each peak value is between 0 and 1.
- *
- * Uses expo-av's Audio.Sound to load and decode the audio file, then extracts
- * raw PCM samples via the onAudioSampleProcessed callback to compute RMS peaks.
  */
 export async function generateWaveformPeaks(
   recordingUri: string,
   durationSeconds: number,
 ): Promise<number[]> {
-  // Create a sound object and load the audio file
-  const { sound } = await Audio.Sound.createAsync(
-    { uri: recordingUri },
-    { shouldPlay: false },
-    null,
-    false,
-  );
-
-  // Get the total duration in milliseconds from the loaded sound
-  const status = await sound.getStatusAsync();
-  const totalDurationMs = status.durationMillis ?? durationSeconds * 1000;
-
-  // We'll collect raw PCM samples via the onAudioSampleProcessed callback.
-  // Since expo-av doesn't expose raw PCM directly through a simple API,
-  // we use a workaround: we seek through the audio and use the sample processor.
-  // For simplicity and reliability, we load the file and use the Audio API's
-  // onAudioSampleProcessed to capture samples.
-  const rawSamples: Float32Array[] = [];
-
-  // Set up a callback to collect samples
-  sound.setOnAudioSampleProcessed((sample) => {
-    rawSamples.push(sample.channelData[0]);
-  });
-
-  // Play the sound briefly to trigger sample processing (we'll stop immediately)
-  await sound.playAsync();
-  // Wait a small amount of time for the callback to fire
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await sound.stopAsync();
-
-  // Unload the sound to free resources
-  await sound.unloadAsync();
-
-  // Concatenate all collected sample chunks into one Float32Array
-  let totalLength = 0;
-  for (const chunk of rawSamples) {
-    totalLength += chunk.length;
-  }
-  const fullData = new Float32Array(totalLength);
-  let offset = 0;
-  for (const chunk of rawSamples) {
-    fullData.set(chunk, offset);
-    offset += chunk.length;
+  if (!recordingUri) {
+    return createSilentPeaks(TARGET_PEAKS_COUNT);
   }
 
-  // If we got no samples (e.g., on a simulator without real audio), fall back
-  // to generating a flat line to avoid an empty waveform
-  if (fullData.length === 0) {
-    return new Array(TARGET_PEAKS_COUNT).fill(0.5);
-  }
+  let sound: Audio.Sound | null = null;
 
-  // Downsample to TARGET_PEAKS_COUNT by computing RMS per block
-  const blockSize = Math.max(1, Math.floor(fullData.length / TARGET_PEAKS_COUNT));
-  const peaks: number[] = [];
+  try {
+    const result = await Audio.Sound.createAsync(
+      { uri: recordingUri },
+      {
+        shouldPlay: false,
+        isMuted: true,
+        volume: 0,
+        progressUpdateIntervalMillis: 100,
+      },
+      undefined,
+      false,
+    );
 
-  for (let i = 0; i < TARGET_PEAKS_COUNT; i++) {
-    const start = i * blockSize;
-    const end = Math.min(start + blockSize, fullData.length);
-    let sumSquares = 0;
-    let count = 0;
-    for (let j = start; j < end; j++) {
-      const sample = fullData[j];
-      sumSquares += sample * sample;
-      count++;
+    sound = result.sound;
+
+    const status = await sound.getStatusAsync();
+    const durationMillis =
+      status.isLoaded && typeof status.durationMillis === 'number'
+        ? status.durationMillis
+        : Math.max(0, durationSeconds * 1000);
+
+    const chunkLevels: number[] = [];
+
+    sound.setOnAudioSampleReceived((sample) => {
+      const level = getAudioSampleRms(sample);
+
+      if (Number.isFinite(level)) {
+        chunkLevels.push(level);
+      }
+    });
+
+    await sound.setPositionAsync(0);
+    const playbackRate = await trySetProcessingPlaybackRate(sound);
+
+    await sound.playAsync();
+    await waitForPlaybackToFinish(sound, durationMillis, playbackRate);
+
+    return downsampleAndNormalizePeaks(chunkLevels, TARGET_PEAKS_COUNT);
+  } finally {
+    if (sound) {
+      try {
+        await sound.unloadAsync();
+      } catch {
+        // Ignore cleanup failures; callers only need the generated peak data.
+      }
     }
-    const rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
-    // Normalize to 0-1 (audio samples are typically in range -1 to 1, so RMS is 0-1)
-    peaks.push(Math.min(1, Math.max(0, rms)));
+  }
+}
+
+function getAudioSampleRms(sample: AudioSample): number {
+  let sumSquares = 0;
+  let frameCount = 0;
+
+  for (const channel of sample.channels) {
+    for (const frame of channel.frames) {
+      if (Number.isFinite(frame)) {
+        const clampedFrame = clamp(frame, -1, 1);
+        sumSquares += clampedFrame * clampedFrame;
+        frameCount += 1;
+      }
+    }
+  }
+
+  return frameCount > 0 ? Math.sqrt(sumSquares / frameCount) : 0;
+}
+
+async function trySetProcessingPlaybackRate(sound: Audio.Sound): Promise<number> {
+  try {
+    await sound.setRateAsync(PROCESSING_PLAYBACK_RATE, false);
+    return PROCESSING_PLAYBACK_RATE;
+  } catch {
+    return 1;
+  }
+}
+
+async function waitForPlaybackToFinish(
+  sound: Audio.Sound,
+  durationMillis: number,
+  playbackRate: number,
+): Promise<void> {
+  const timeoutMillis = Math.max(
+    MIN_PROCESSING_TIMEOUT_MS,
+    Math.ceil(durationMillis / playbackRate) + PROCESSING_TIMEOUT_PADDING_MS,
+  );
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMillis) {
+    const status = await sound.getStatusAsync();
+
+    if (!status.isLoaded || status.didJustFinish) {
+      return;
+    }
+
+    if (
+      typeof status.durationMillis === 'number' &&
+      typeof status.positionMillis === 'number' &&
+      status.durationMillis > 0 &&
+      status.positionMillis >= status.durationMillis - 50
+    ) {
+      return;
+    }
+
+    await delay(100);
+  }
+
+  try {
+    await sound.stopAsync();
+  } catch {
+    // The sound may already be stopped or unloaded by the platform.
+  }
+}
+
+function downsampleAndNormalizePeaks(levels: number[], targetCount: number): number[] {
+  if (targetCount <= 0) {
+    return [];
+  }
+
+  if (levels.length === 0) {
+    return createSilentPeaks(targetCount);
+  }
+
+  const peaks =
+    levels.length <= targetCount
+      ? interpolatePeaks(levels, targetCount)
+      : reducePeaksByWindow(levels, targetCount);
+
+  return normalizePeaks(peaks);
+}
+
+function interpolatePeaks(levels: number[], targetCount: number): number[] {
+  if (levels.length === 1) {
+    return new Array(targetCount).fill(levels[0]);
+  }
+
+  const peaks: number[] = [];
+  const maxSourceIndex = levels.length - 1;
+
+  for (let i = 0; i < targetCount; i += 1) {
+    const sourceIndex = (i / Math.max(1, targetCount - 1)) * maxSourceIndex;
+    const lowerIndex = Math.floor(sourceIndex);
+    const upperIndex = Math.min(maxSourceIndex, lowerIndex + 1);
+    const blend = sourceIndex - lowerIndex;
+    const interpolated = levels[lowerIndex] * (1 - blend) + levels[upperIndex] * blend;
+
+    peaks.push(interpolated);
   }
 
   return peaks;
+}
+
+function reducePeaksByWindow(levels: number[], targetCount: number): number[] {
+  const peaks: number[] = [];
+  const windowSize = levels.length / targetCount;
+
+  for (let i = 0; i < targetCount; i += 1) {
+    const start = Math.floor(i * windowSize);
+    const end = Math.max(start + 1, Math.floor((i + 1) * windowSize));
+    let peak = 0;
+
+    for (let j = start; j < Math.min(end, levels.length); j += 1) {
+      peak = Math.max(peak, levels[j]);
+    }
+
+    peaks.push(peak);
+  }
+
+  return peaks;
+}
+
+function normalizePeaks(peaks: number[]): number[] {
+  const maxPeak = peaks.reduce((max, peak) => Math.max(max, peak), 0);
+
+  if (maxPeak <= SILENCE_THRESHOLD) {
+    return createSilentPeaks(peaks.length);
+  }
+
+  return peaks.map((peak) => clamp(peak / maxPeak, 0, 1));
+}
+
+function createSilentPeaks(count: number): number[] {
+  return new Array(count).fill(0);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

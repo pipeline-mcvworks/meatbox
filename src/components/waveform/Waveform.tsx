@@ -1,14 +1,7 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import {
-  Canvas,
-  Path,
-  Skia,
-  Text,
-  useFont,
-  vec,
-} from '@shopify/react-native-skia';
-import { colors, spacing } from '../../theme';
+import { View, StyleSheet, Text } from 'react-native';
+import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import { colors, spacing, typography } from '../../theme';
 
 interface WaveformProps {
   peaks: number[];
@@ -20,14 +13,15 @@ interface WaveformProps {
 }
 
 const DEFAULT_HEIGHT = 200;
-const HIT_MARKER_AREA_HEIGHT = 30;
+const HIT_MARKER_AREA_HEIGHT = 34;
 const WAVEFORM_COLOR = colors.neonGreen;
 const SCRUB_COLOR = colors.white;
 const HIT_MARKER_COLOR = colors.accent;
+const CENTER_LINE_COLOR = 'rgba(255, 255, 255, 0.25)';
 
 /**
  * Renders a waveform visualization using Skia.
- * Shows the waveform, a scrub marker, duration text, and a placeholder hit markers area.
+ * Shows centered waveform bars, a scrub marker, duration text, and a hit marker placeholder.
  */
 export default function Waveform({
   peaks,
@@ -36,80 +30,88 @@ export default function Waveform({
   height = DEFAULT_HEIGHT,
   scrubPosition = 0,
 }: WaveformProps): React.JSX.Element {
-  const waveformHeight = height - HIT_MARKER_AREA_HEIGHT;
-  const path = Skia.Path.Make();
+  const waveformHeight = Math.max(0, height - HIT_MARKER_AREA_HEIGHT);
+  const midY = waveformHeight / 2;
+  const maxAmplitude = Math.max(0, midY - 4);
+  const scrubX = clamp(scrubPosition, 0, 1) * width;
+  const strokeWidth = Math.max(1, Math.min(3, width / Math.max(1, peaks.length) * 0.8));
+
+  const waveformPath = Skia.Path.Make();
+  const centerLinePath = Skia.Path.Make();
+  const scrubPath = Skia.Path.Make();
+  const hitMarkersPath = Skia.Path.Make();
+
+  centerLinePath.moveTo(0, midY);
+  centerLinePath.lineTo(width, midY);
 
   if (peaks.length === 0) {
-    // No peaks: draw a flat line
-    path.moveTo(0, waveformHeight / 2);
-    path.lineTo(width, waveformHeight / 2);
+    waveformPath.moveTo(0, midY);
+    waveformPath.lineTo(width, midY);
   } else {
-    const stepX = width / peaks.length;
-    const midY = waveformHeight / 2;
+    const stepX = peaks.length > 1 ? width / (peaks.length - 1) : 0;
 
-    // Move to first point
-    path.moveTo(0, midY - peaks[0] * midY);
+    for (let i = 0; i < peaks.length; i += 1) {
+      const x = peaks.length > 1 ? i * stepX : width / 2;
+      const amplitude = clamp(peaks[i], 0, 1) * maxAmplitude;
 
-    for (let i = 1; i < peaks.length; i++) {
-      const x = i * stepX;
-      const y = midY - peaks[i] * midY;
-      path.lineTo(x, y);
+      waveformPath.moveTo(x, midY - amplitude);
+      waveformPath.lineTo(x, midY + amplitude);
     }
   }
 
-  // Scrub marker line
-  const scrubX = scrubPosition * width;
-  const scrubPath = Skia.Path.Make();
   scrubPath.moveTo(scrubX, 0);
   scrubPath.lineTo(scrubX, waveformHeight);
 
-  // Duration text
-  const minutes = Math.floor(durationSeconds / 60);
-  const seconds = Math.floor(durationSeconds % 60);
-  const durationStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
-  // Placeholder hit markers area (bottom strip)
-  const hitMarkersPath = Skia.Path.Make();
-  // Draw a dashed line to indicate the hit markers area
-  hitMarkersPath.moveTo(0, waveformHeight + HIT_MARKER_AREA_HEIGHT / 2);
-  hitMarkersPath.lineTo(width, waveformHeight + HIT_MARKER_AREA_HEIGHT / 2);
+  const hitMarkerY = waveformHeight + HIT_MARKER_AREA_HEIGHT / 2;
+  hitMarkersPath.moveTo(0, hitMarkerY);
+  hitMarkersPath.lineTo(width, hitMarkerY);
 
   return (
     <View style={styles.container}>
       <Canvas style={{ width, height }}>
-        {/* Waveform path */}
         <Path
-          path={path}
+          path={centerLinePath}
+          color={CENTER_LINE_COLOR}
+          style="stroke"
+          strokeWidth={1}
+        />
+        <Path
+          path={waveformPath}
           color={WAVEFORM_COLOR}
           style="stroke"
-          strokeWidth={2}
+          strokeWidth={strokeWidth}
         />
-        {/* Scrub marker */}
         <Path
           path={scrubPath}
           color={SCRUB_COLOR}
           style="stroke"
           strokeWidth={1}
         />
-        {/* Hit markers area placeholder */}
         <Path
           path={hitMarkersPath}
           color={HIT_MARKER_COLOR}
           style="stroke"
           strokeWidth={1}
-          strokeDash={[4, 4]}
-        />
-        {/* Duration text */}
-        <Text
-          x={8}
-          y={waveformHeight - 8}
-          text={durationStr}
-          color={colors.white}
-          size={12}
         />
       </Canvas>
+      <View style={[styles.footer, { width }]}> 
+        <Text style={styles.durationText}>{formatDuration(durationSeconds)}</Text>
+        <Text style={styles.hitMarkerText}>Hit markers</Text>
+      </View>
     </View>
   );
+}
+
+function formatDuration(durationSeconds: number): string {
+  const safeDuration = Math.max(0, Math.floor(durationSeconds));
+  const minutes = Math.floor(safeDuration / 60);
+  const seconds = safeDuration % 60;
+
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 const styles = StyleSheet.create({
@@ -117,5 +119,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: spacing[2],
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing[1],
+  },
+  durationText: {
+    color: colors.white,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+  },
+  hitMarkerText: {
+    color: colors.accent,
+    fontSize: typography.sizes.sm,
   },
 });
